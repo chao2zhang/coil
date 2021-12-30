@@ -1,108 +1,81 @@
 package coil.sample
 
-import android.os.Build.VERSION.SDK_INT
+import android.content.Context
+import android.content.res.Resources
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.drawable.BitmapDrawable
 import android.os.Bundle
-import android.view.Menu
-import android.view.MenuItem
-import androidx.activity.viewModels
+import android.widget.ImageView
+import androidx.annotation.DrawableRes
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.isVisible
-import androidx.core.view.updatePadding
+import androidx.appcompat.content.res.AppCompatResources
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.StaggeredGridLayoutManager
-import androidx.recyclerview.widget.StaggeredGridLayoutManager.VERTICAL
-import coil.load
-import coil.sample.databinding.ActivityMainBinding
+import coil.ImageLoader
+import coil.request.ImageRequest
+import coil.size.Size
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
-
-    private val viewModel: MainViewModel by viewModels()
-
-    private lateinit var binding: ActivityMainBinding
-    private lateinit var listAdapter: ImageListAdapter
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-        setSupportActionBar(binding.toolbar)
+        setContentView(R.layout.activity_main)
+        val bfView = findViewById<ImageView>(R.id.bitmapfactory)
+        val coilView = findViewById<ImageView>(R.id.coil)
+        val imageLoader= ImageLoader.Builder(this)
+            .dispatcher(Dispatchers.IO)
+            .build()
 
-        if (SDK_INT >= 29) {
-            window.setDecorFitsSystemWindowsCompat(false)
-            binding.toolbar.setOnApplyWindowInsetsListener { view, insets ->
-                view.updatePadding(
-                    top = insets.toCompat().getInsets(WindowInsetsCompat.Type.systemBars()).top
-                )
-                insets
-            }
-        }
+        lifecycleScope.launch {
+            val (nativeBitmap, coilBitmap) =
+                getBitmap(R.drawable.instagram_icon, this@MainActivity, null) to
+                fetchBitmap(R.drawable.instagram_icon, this@MainActivity, imageLoader, Size.ORIGINAL)
 
-        val numColumns = numberOfColumns(this)
-        listAdapter = ImageListAdapter(numColumns) { viewModel.screen.value = it }
-        binding.list.apply {
-            setHasFixedSize(true)
-            layoutManager = StaggeredGridLayoutManager(numColumns, VERTICAL)
-            adapter = listAdapter
-        }
-
-        lifecycleScope.apply {
-            launch { viewModel.assetType.collect(::setAssetType) }
-            launch { viewModel.images.collect(::setImages) }
-            launch { viewModel.screen.collect(::setScreen) }
+//            val (nativeBitmap, coilBitmap) =
+//                BitmapFactory.decodeStream(this@MainActivity.assets.open("instagram_icon.png")) to
+//                fetchBitmap("file:///android_asset/instagram_icon.png", this@MainActivity, imageLoader, Size.ORIGINAL)
+            bfView.setImageBitmap(nativeBitmap)
+            coilView.setImageBitmap(coilBitmap)
         }
     }
 
-    private fun setScreen(screen: Screen) {
-        when (screen) {
-            is Screen.List -> {
-                binding.list.isVisible = true
-                binding.detail.isVisible = false
-            }
-            is Screen.Detail -> {
-                binding.list.isVisible = false
-                binding.detail.isVisible = true
-                binding.detail.load(screen.image.uri) {
-                    placeholderMemoryCacheKey(screen.placeholder)
-                    parameters(screen.image.parameters)
-                }
-            }
+    fun getBitmap(@DrawableRes id: Int, context: Context, color: Int?): Bitmap {
+        // If resource is a png drawable.
+        BitmapFactory.decodeResource(
+            context.resources, id
+        )?.let {
+            return it
         }
+
+
+        // If resource is a xml drawable.
+        val drawable = AppCompatResources.getDrawable(context, id)
+            ?: throw Resources.NotFoundException("Could not find drawable with ID '$id'")
+        color?.let { drawable.setTint(it) }
+        return drawable.toBitmap()
     }
 
-    private fun setImages(images: List<Image>) {
-        listAdapter.submitList(images) {
-            // Ensure we're at the top of the list when the list items are updated.
-            binding.list.scrollToPosition(0)
-        }
-    }
+    suspend fun fetchBitmap(
+        data: Any,
+        context: Context,
+        imageLoader: ImageLoader,
+        size: Size
+    ): Bitmap = withContext(Dispatchers.IO) {
+        val imageRequest = ImageRequest.Builder(context)
+            .data(data)
+            .size(size)
+            .allowHardware(false)
+            .build()
+        val drawable = imageLoader.execute(imageRequest).drawable
+            ?: throw Resources.NotFoundException("Could not find drawable with ID '$data'")
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun setAssetType(assetType: AssetType) {
-        invalidateOptionsMenu()
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        val title = viewModel.assetType.value.name
-        val item = menu.add(Menu.NONE, R.id.action_toggle_asset_type, Menu.NONE, title)
-        item.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        when (item.itemId) {
-            R.id.action_toggle_asset_type -> {
-                viewModel.assetType.value = viewModel.assetType.value.next()
-            }
-            else -> return super.onOptionsItemSelected(item)
-        }
-        return true
-    }
-
-    override fun onBackPressed() {
-        if (!viewModel.onBackPressed()) {
-            super.onBackPressed()
+        if (drawable is BitmapDrawable) {
+            drawable.bitmap
+        } else {
+            drawable.toBitmap()
         }
     }
 }
